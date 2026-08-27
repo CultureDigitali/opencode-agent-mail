@@ -49,7 +49,7 @@ function loadIdentity(): AgentIdentity {
   return {
     agent_id: process.env.AGENT_ID || "opencode-main",
     display_name: process.env.AGENT_DISPLAY_NAME || "OpenCode Agent",
-    email: process.env.GMAIL_USER || process.env.MAIL_FROM || "cultureagentpc@gmail.com",
+    email: process.env.GMAIL_USER || process.env.MAIL_FROM || "your.agent@gmail.com",
     signature: process.env.AGENT_SIGNATURE || "-- OpenCode Agent",
     instance_host: os.hostname(),
   }
