@@ -1,0 +1,58 @@
+{
+  "name": "opencode-agent-mail",
+  "version": "1.0.0",
+  "description": "One inbox. Infinite agents. The revolutionary email identity plugin for OpenCode — give every agent a soul, keep one Gmail.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "skills",
+    "examples",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "prepublishOnly": "npm run build",
+    "test:mail": "node --loader ts-node/esm test/send.test.ts"
+  },
+  "keywords": [
+    "opencode",
+    "plugin",
+    "email",
+    "agent-identity",
+    "gmail",
+    "resend",
+    "ai-agents",
+    "automation",
+    "signature",
+    "multi-agent"
+  ],
+  "author": "Culture Agent",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/opencode-agent-mail"
+  },
+  "homepage": "https://github.com/your-org/opencode-agent-mail#readme",
+  "bugs": "https://github.com/your-org/opencode-agent-mail/issues",
+  "engines": {
+    "node": ">=18"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": "^1.18.0"
+  },
+  "dependencies": {
+    "nodemailer": "^9.0.5"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "@types/node": "^22.0.0",
+    "@types/nodemailer": "^6.4.15"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

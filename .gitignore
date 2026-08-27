@@ -1,0 +1,29 @@
+# Secrets — NEVER commit
+.env
+.agent-identity.json
+agent-identity.json
+agent-mail-sessions.json
+*.pem
+*.key
+
+# Build
+dist/
+node_modules/
+*.tsbuildinfo
+
+# OS
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.log*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temp
+tmp/
+temp/
+.opencode/
