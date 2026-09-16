@@ -3,6 +3,10 @@ import nodemailer from "nodemailer"
 import fs from "fs"
 import path from "path"
 import os from "os"
+import { fileURLToPath } from "url"
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
 // ── Types ─────────────────────────────────────────────────────────
 type AgentIdentity = {
@@ -28,7 +32,7 @@ type SessionRecord = {
 
 // ── Paths ─────────────────────────────────────────────────────────
 const IDENTITY_PATH = path.join(os.homedir(), ".config", "opencode", "agent-identity.json")
-const IDENTITY_FALLBACK = path.join(import.meta.dir, "..", "agent-identity.json")
+const IDENTITY_FALLBACK = path.join(__dirname, "..", "agent-identity.json")
 const SESSION_STORE_PATH = path.join(os.homedir(), ".config", "opencode", "agent-mail-sessions.json")
 
 // ── In-memory caches (per-process) ────────────────────────────────
@@ -326,7 +330,7 @@ export const AgentMailPlugin: Plugin = async (input) => {
     "chat.params": async (p, _out) => {
       try {
         if (p.sessionID && p.model) {
-          modelBySession.set(p.sessionID, { providerID: p.model.providerID ?? (p as any).providerID ?? "unknown", modelID: p.model.modelID ?? (p as any).modelID ?? "unknown" })
+          modelBySession.set(p.sessionID, { providerID: p.model.providerID ?? (p as any).providerID ?? "unknown", modelID: (p.model as any).id ?? (p.model as any).modelID ?? "unknown" })
           // also store project context if available
           if (p.sessionID && !projectBySession.has(p.sessionID)) {
             projectBySession.set(p.sessionID, { directory: globalDirectory, worktree: globalWorktree })
@@ -337,7 +341,7 @@ export const AgentMailPlugin: Plugin = async (input) => {
     "chat.message": async (p, _out) => {
       try {
         if (p.sessionID && p.model) {
-          modelBySession.set(p.sessionID, { providerID: (p.model as any).providerID, modelID: (p.model as any).modelID })
+          modelBySession.set(p.sessionID, { providerID: (p.model as any).providerID, modelID: (p.model as any).id ?? (p.model as any).modelID })
         }
       } catch {}
     },
