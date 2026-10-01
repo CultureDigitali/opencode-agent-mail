@@ -9,5 +9,17 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
-      - run: npm run build
+      - run: npm run typecheck
+      - run: npm test
       - run: node --check dist/index.js
+      - name: Smoke test del plugin caricato
+        run: node test/smoke.plugin.mjs
+      - name: Nessun segreto nel sorgente
+        run: |
+          # Chiavi Resend e valori reali assegnati a variabili di password.
+          # Pattern volutamente stretti: regex larghe generano falsi positivi.
+          if git grep -nE '(re_[A-Za-z0-9]{20,}|(PASSWORD|SMTP_PASS|APP_PASS)=[A-Za-z0-9]{12,})' -- src test .github; then
+            echo "::error::possibile credenziale nel sorgente"
+            exit 1
+          fi
+          echo "nessuna credenziale rilevata"

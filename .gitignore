@@ -1,5 +1,7 @@
 # Secrets — NEVER commit
 .env
+.env.*
+!.env.example
 .agent-identity.json
 agent-identity.json
 agent-mail-sessions.json
@@ -10,6 +12,10 @@ agent-mail-sessions.json
 dist/
 node_modules/
 *.tsbuildinfo
+
+# Loop state / test artifacts
+.gigiloop/
+*.tmp
 
 # OS
 .DS_Store

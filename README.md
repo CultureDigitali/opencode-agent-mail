@@ -98,20 +98,37 @@ Gmail filter: `X-Agent-ID:agent-server-02` → auto-label `🤖 Server Prod`
 ### 1. Install
 
 ```bash
-# Inside your OpenCode config
-npm install opencode-agent-mail nodemailer
-# or
-bun add opencode-agent-mail nodemailer
+git clone https://github.com/CultureDigitali/opencode-agent-mail.git
+cd opencode-agent-mail
+npm ci
+npm run build
 ```
 
-Copy plugin:
+Copy plugin (Linux/macOS):
 
 ```bash
-cp node_modules/opencode-agent-mail/dist/index.js ~/.config/opencode/plugins/agent-mail.ts
-cp -r node_modules/opencode-agent-mail/skills/agent-mail ~/.config/opencode/skills/
+mkdir -p ~/.config/opencode/plugins ~/.config/opencode/skills
+cp dist/index.js ~/.config/opencode/plugins/agent-mail.ts
+cp -r skills/agent-mail ~/.config/opencode/skills/
 ```
 
-Or manually: copy `src/index.ts` → `~/.config/opencode/plugins/agent-mail.ts`
+Windows (PowerShell):
+
+```powershell
+New-Item -ItemType Directory -Force "$HOME\.config\opencode\plugins"
+New-Item -ItemType Directory -Force "$HOME\.config\opencode\skills"
+Copy-Item dist\index.js "$HOME\.config\opencode\plugins\agent-mail.ts"
+Copy-Item -Recurse skills\agent-mail "$HOME\.config\opencode\skills\"
+```
+
+Install the runtime dependency where OpenCode resolves plugins:
+
+```bash
+cd ~/.config/opencode && npm install nodemailer
+```
+
+> Working from source: you can copy `src/index.ts` instead of `dist/index.js`, but you
+> still need `nodemailer` installed and `@opencode-ai/plugin` available.
 
 Enable in `~/.config/opencode/opencode.jsonc`:
 
@@ -207,22 +224,50 @@ Filter in Gmail: `from:cultureagentpc@gmail.com X-Agent-ID:agent-server-02`
 | Stage | Config | Cost |
 |-------|--------|------|
 | **Now** | Gmail SMTP (`smtp.gmail.com:587`) | **0€** — 500 mails/day |
-| **Later** | Add `RESEND_SMTP_PASS=re_xxx` to env | Still free tier (100/day), but with `agents@yourdomain.com` + perfect deliverability |
+| **Later** | `MAIL_PROVIDER=resend` + `RESEND_SMTP_PASS` | Resend free tier (100/day), plus your own domain |
 
-The plugin **auto-detects** `GMAIL_APP_PASSWORD` → Gmail, else `RESEND_SMTP_PASS` → Resend. No code change.
+The plugin resolves the provider **explicitly and predictably**:
+
+1. If `MAIL_PROVIDER` is set (`gmail`, `resend`, `generic`), that provider is used — and if its
+   credentials are missing the plugin refuses to start rather than silently falling back.
+2. Otherwise it auto-detects in this order: `GMAIL_USER`+`GMAIL_APP_PASSWORD` → gmail,
+   `RESEND_SMTP_PASS`/`SMTP_PASS` → resend, `SMTP_HOST` → generic. If more than one provider is
+   configured without `MAIL_PROVIDER`, `mail_status` reports a diagnostic telling you to choose
+   explicitly.
+
+> **Important:** setting only `RESEND_SMTP_PASS` does **not** switch a Gmail-configured install.
+> Set `MAIL_PROVIDER=resend` as well.
 
 ```env
 # Day 1 — Gmail
 GMAIL_USER=cultureagentpc@gmail.com
 GMAIL_APP_PASSWORD=...
 
-# Day 100 — You bought yourdomain.com, add 3 DNS for Resend
+# Day 100 — own domain, Resend
+MAIL_PROVIDER=resend
 SMTP_HOST=smtp.resend.com
+SMTP_PORT=587
 SMTP_USER=resend
 RESEND_SMTP_PASS=re_xxx
-MAIL_FROM=agents@yourdomain.com
-# Plugin switches automatically. Identities stay identical.
+MAIL_TO=you@example.com
+# Identities stay identical.
 ```
+
+### Generic SMTP (self-hosted, corporate relays)
+
+```env
+MAIL_PROVIDER=generic
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=utente
+SMTP_PASS=password
+```
+
+`SMTP_SECURE=true` selects implicit TLS (typically port 465, which is detected automatically);
+otherwise the plugin requires STARTTLS and will not send over a plaintext connection.
+`SMTP_USER` is required whenever `SMTP_PASS` is set; for a deliberately unauthenticated relay
+set `SMTP_ALLOW_ANONYMOUS=true`.
 
 ---
 
@@ -261,12 +306,30 @@ mail_report({
 })
 ```
 
+### `mail_inbox` — read replies (IMAP)
+
+```ts
+mail_inbox({ limit: 10 })                       // unread, replies addressed to this identity
+mail_inbox({ only_mine: false })                // whole mailbox, not just this agent's
+mail_inbox({ include_body: true, limit: 3 })    // full text instead of snippet
+mail_inbox({ mark_seen: true })                 // opt-in: flags messages as \Seen
+```
+
+Credentials default to the ones you already use — `IMAP_USER`/`IMAP_PASS`, falling back to
+`GMAIL_USER`/`GMAIL_APP_PASSWORD` — so a Gmail App Password covers both sending and reading.
+Gmail requires IMAP to be enabled at https://mail.google.com/mail/#settings.
+
+By default `mail_inbox` filters to messages that are replies to what this identity sent (matched
+via `In-Reply-To`) or that carry its `X-Agent-ID`, which keeps a shared inbox usable with several
+agents. It does **not** mark anything as read unless you pass `mark_seen: true`.
+
 ### `mail_preview_signature` · `mail_status` · `mail_verify`
 
 ```ts
 mail_preview_signature({ reason: "Demo" })
-mail_status() // shows identity + SMTP + gate state + session
-mail_verify() // just SMTP verify
+mail_status()            // identity + SMTP + gate state, no network I/O
+mail_status({ verify: true })  // opt in to an SMTP connection test
+mail_verify()            // explicit SMTP verify only
 ```
 
 ---
@@ -278,12 +341,35 @@ mail_verify() // just SMTP verify
 | You write transport + headers each time | `mail_send` in one line |
 | No identity abstraction → same `From` for all agents | Identity file → `From` + `X-Agent-ID` per agent |
 | No signature → recipient sees nothing | Smart Signature auto-injected |
-| No gate → agents spam silently | Context Gate forces `reason` |
+| No gate → agents spam silently | Context Gate forces `reason`; `MAIL_MAX_PER_HOUR` caps runaway loops |
 | Secrets in code | Secrets in env, identity in git-safe JSON |
-| No session tracking | Per-session store `~/.config/opencode/agent-mail-sessions.json` |
+| No session tracking | Per-session store, isolated per identity |
 | No export story | Copy 2 files + change 1 ID |
 
 **This is not an email wrapper. It's an identity layer.**
+
+---
+
+## 🔧 Environment reference
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `GMAIL_USER` / `GMAIL_APP_PASSWORD` | Gmail credentials | — |
+| `MAIL_TO` | Default recipient | identity email |
+| `MAIL_PROVIDER` | Explicit provider: `gmail` \| `resend` \| `generic` | auto-detect |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_SECURE` / `SMTP_USER` / `SMTP_PASS` / `SMTP_ALLOW_ANONYMOUS` | Generic SMTP | 587 + STARTTLS |
+| `RESEND_SMTP_PASS` | Resend API key | — |
+| `AGENT_ID` / `AGENT_DISPLAY_NAME` / `AGENT_SIGNATURE` / `AGENT_INSTANCE_HOST` | Identity overrides (take precedence over the JSON file, field by field) | see above |
+| `AGENT_MAIL_STATE_DIR` | Where identity + session store live | `~/.config/opencode` |
+| `MAIL_MAX_PER_HOUR` | Per-identity hourly send cap, persisted on disk (0 = off) | 0 (off) |
+| `IMAP_USER` / `IMAP_PASS` | IMAP credentials for `mail_inbox` | falls back to `GMAIL_USER` / `GMAIL_APP_PASSWORD` |
+| `IMAP_HOST` / `IMAP_PORT` / `IMAP_SECURE` | IMAP server | `imap.gmail.com:993`, secure |
+
+> **The context gate is transparency, not authorization.** `confirm: true` is supplied by the
+> agent, not by you. It forces every email to explain who sent it and why; it does not stop an
+> agent from sending something you would not have sent. `MAIL_MAX_PER_HOUR` caps runaway loops and
+> is persisted per identity, so it survives plugin reloads on that machine — but it still does not
+> aggregate across machines. Treat it as a safety net, not a quota, and review new recipients.
 
 ---
 
@@ -315,7 +401,8 @@ Signature pulls:
 - [x] Exportable identity + same inbox
 - [x] Context Gate™ + Smart Signature™
 - [x] Per-session store + model tracking
-- [ ] IMAP inbox polling (`mail_inbox` tool) — read replies
+- [x] IMAP inbox reading (`mail_inbox`)
+- [x] Persistent per-identity hourly rate limit
 - [ ] Cron reports (`mail_schedule daily 09:00`)
 - [ ] Telegram/Discord bridge (same identity)
 - [ ] Dashboard: see all agents, filter by `X-Agent-ID`
@@ -327,15 +414,23 @@ PRs welcome. Keep secrets out of PRs.
 ## 🤝 Contributing
 
 ```bash
-git clone https://github.com/your-org/opencode-agent-mail
+git clone https://github.com/CultureDigitali/opencode-agent-mail
 cd opencode-agent-mail
-npm install
+npm ci
+npm run typecheck   # tsc --noEmit
+npm test            # build + node:test suite, no network
 npm run build
 ```
 
-Copy `dist/index.js` → your `~/.config/opencode/plugins/` to test.
+`npm test` runs a dependency-free `node:test` suite covering provider selection, identity
+precedence/validation, the context gate, header sanitization, HTML escaping, session-store
+atomicity and legacy migration, the persistent hourly rate limit, and IMAP parsing and filtering.
+It performs **no network I/O and sends no email**. CI additionally loads the built plugin and
+asserts the context gate blocks an unconfirmed first send, then that it sends once `reason` and
+`confirm` are supplied.
 
-**Never commit:** `.env`, `agent-identity.json`, `agent-mail-sessions.json` — see `.gitignore`.
+**Never commit:** `.env`, `.env.*` (except `.env.example`), `agent-identity.json`,
+`agent-mail-sessions.json` — see `.gitignore`.
 
 ---
 
