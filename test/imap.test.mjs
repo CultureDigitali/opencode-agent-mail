@@ -13,7 +13,7 @@ delete process.env.RESEND_SMTP_PASS
 delete process.env.SMTP_HOST
 
 const mod = await import("../dist/index.js")
-const T = mod.__testing
+const T = mod.AgentMailPlugin.__testing
 
 // La parola encoded-word è costruita a runtime: evita di scrivere a mano
 // il base64 (errore facile, e un test con dati sbagliati non prova nulla).
@@ -215,7 +215,7 @@ test("mail_inbox: only_mine=true NON deve perdere una risposta umana (bug F2)", 
       process.env.AGENT_MAIL_STATE_DIR = ${JSON.stringify(process.env.AGENT_MAIL_STATE_DIR)};
       delete process.env.GMAIL_USER; delete process.env.GMAIL_APP_PASSWORD; delete process.env.SMTP_HOST;
       const m = await import(${JSON.stringify(new URL("../dist/index.js", import.meta.url).href)});
-      m.__testing.recordSentId("culture-agent-pc-01", "<orig-1@example.com>");
+      m.AgentMailPlugin.__testing.recordSentId("culture-agent-pc-01", "<orig-1@example.com>");
       console.log("recorded");
     `
     const rec = spawnSync(process.execPath, ["--input-type=module", "-e", script], { encoding: "utf8" })
@@ -355,10 +355,10 @@ test("recordSentId persiste e sentIdsFor rilegge", () => {
     process.env.AGENT_MAIL_STATE_DIR = ${JSON.stringify(process.env.AGENT_MAIL_STATE_DIR)};
     delete process.env.GMAIL_USER; delete process.env.GMAIL_APP_PASSWORD; delete process.env.SMTP_HOST;
     const m = await import(${JSON.stringify(new URL("../dist/index.js", import.meta.url).href)});
-    m.__testing.recordSentId("ag-x", "<a@x>");
-    m.__testing.recordSentId("ag-x", "<b@x>");
-    m.__testing.recordSentId("ag-x", "<a@x>");
-    console.log(JSON.stringify([...m.__testing.sentIdsFor("ag-x")]));
+    m.AgentMailPlugin.__testing.recordSentId("ag-x", "<a@x>");
+    m.AgentMailPlugin.__testing.recordSentId("ag-x", "<b@x>");
+    m.AgentMailPlugin.__testing.recordSentId("ag-x", "<a@x>");
+    console.log(JSON.stringify([...m.AgentMailPlugin.__testing.sentIdsFor("ag-x")]));
   `
   const out = spawnSync(process.execPath, ["--input-type=module", "-e", script], { encoding: "utf8" })
   assert.equal(out.status, 0, out.stderr)

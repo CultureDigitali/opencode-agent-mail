@@ -14,7 +14,7 @@ delete process.env.RESEND_SMTP_PASS
 delete process.env.SMTP_HOST
 
 const mod = await import("../dist/index.js")
-const T = mod.__testing
+const T = mod.AgentMailPlugin.__testing
 
 test("rate limit disattivato per default quando MAIL_MAX_PER_HOUR=0 assente", () => {
   // in questo processo è impostato a 2: verifichiamo il comportamento configurato

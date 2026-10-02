@@ -9,7 +9,7 @@ const STATE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "agent-mail-test-"))
 process.env.AGENT_MAIL_STATE_DIR = STATE_DIR
 
 const mod = await import("../dist/index.js")
-const T = mod.__testing
+const T = mod.AgentMailPlugin.__testing
 
 const MAIL_ENV = [
   "GMAIL_USER",

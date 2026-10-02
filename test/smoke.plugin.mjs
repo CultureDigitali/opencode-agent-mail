@@ -9,8 +9,8 @@ import * as mod from "../dist/index.js"
 // questo test non può mai inviare email vere.
 const STATE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "agent-mail-smoke-"))
 process.env.AGENT_MAIL_STATE_DIR = STATE_DIR
-if (!mod.__testing || typeof mod.__testing.setTransportFactory !== "function") {
-  console.error("FAIL: dist/index.js non espone __testing.setTransportFactory (build non eseguito?)")
+if (!mod.AgentMailPlugin.__testing || typeof mod.AgentMailPlugin.__testing.setTransportFactory !== "function") {
+  console.error("FAIL: dist/index.js non espone AgentMailPlugin.__testing (build non eseguito?)")
   process.exit(1)
 }
 
@@ -46,7 +46,7 @@ const fail = (msg) => {
 }
 
 // --- ramo 1: SMTP non configurato (transport factory → null) ---
-mod.__testing.setTransportFactory(() => null)
+mod.AgentMailPlugin.__testing.setTransportFactory(() => null)
 const unconfigured = await hooks.tool.mail_send.execute(
   { to: "test@example.invalid", subject: "smoke", html: "<p>x</p>", reason: "smoke test", confirm: true },
   { sessionID: `smoke-off-${Date.now()}`, agent: "build", directory: process.cwd(), worktree: process.cwd() }
@@ -57,7 +57,7 @@ if (!/non configurato/i.test(offlineMsg)) fail("senza transport deve segnalare S
 
 // --- ramo 2: gate di contesto (transport finto, zero rete) ---
 const sent = []
-mod.__testing.setTransportFactory(() => ({
+mod.AgentMailPlugin.__testing.setTransportFactory(() => ({
   async sendMail(msg) {
     sent.push(msg)
     return { messageId: "smoke-id", accepted: [msg.to], rejected: [] }

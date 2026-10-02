@@ -22,7 +22,7 @@ process.env.SMTP_USER = "int-user"
 process.env.SMTP_PASS = "int-pass-very-secret"
 
 const mod = await import("../dist/index.js")
-const T = mod.__testing
+const T = mod.AgentMailPlugin.__testing
 
 async function makeHooks() {
   const plugin = mod.AgentMailPlugin || mod.default
@@ -61,8 +61,8 @@ test("default: senza MAIL_MAX_PER_HOUR il limite è 0 e non blocca mai (verifica
     delete process.env.MAIL_MAX_PER_HOUR;
     process.env.AGENT_MAIL_STATE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "rl-off-"));
     const m = await import(${JSON.stringify(new URL("../dist/index.js", import.meta.url).href)});
-    for (let i = 0; i < 50; i++) m.__testing.bumpRateLimit("agente");
-    const r = m.__testing.checkRateLimit("agente");
+    for (let i = 0; i < 50; i++) m.AgentMailPlugin.__testing.bumpRateLimit("agente");
+    const r = m.AgentMailPlugin.__testing.checkRateLimit("agente");
     console.log(JSON.stringify(r));
   `
   const out = spawnSync(process.execPath, ["--input-type=module", "-e", script], { encoding: "utf8" })
@@ -137,7 +137,7 @@ test("il contatore sopravvive a un nuovo processo (persistenza su disco)", () =>
     delete process.env.GMAIL_USER; delete process.env.GMAIL_APP_PASSWORD;
     delete process.env.RESEND_SMTP_PASS; delete process.env.SMTP_HOST;
     const m = await import(${JSON.stringify(new URL("../dist/index.js", import.meta.url).href)});
-    console.log(JSON.stringify(m.__testing.checkRateLimit("agente-persistente")));
+    console.log(JSON.stringify(m.AgentMailPlugin.__testing.checkRateLimit("agente-persistente")));
   `
   const out = spawnSync(process.execPath, ["--input-type=module", "-e", script], { encoding: "utf8" })
   assert.equal(out.status, 0, out.stderr)

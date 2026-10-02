@@ -1458,10 +1458,52 @@ export default AgentMailPlugin
 
 /**
  * Superficie interna per test automatici (nessuna rete, nessun invio).
- * Non fa parte dell'API del plugin: serve a rendere verificabile il comportamento
- * delle funzioni pure e della risoluzione di configurazione.
+ *
+ * NON è un export separato del modulo. opencode scorre TUTTI gli export e, per
+ * ognuno che non è una funzione plugin, solleva "Plugin export is not a
+ * function" (logica `lk`/`dk` del loader di opencode 1.18.x). Un
+ * `export const __testing = {...}` renderebbe quindi il plugin INCARCICABILE,
+ * in silenzio: zero tool e nessun errore in UI. Bug realmente verificato.
+ * Per questo è una PROPRIETÀ della funzione plugin: `AgentMailPlugin.__testing`.
  */
-export const __testing = {
+type Testing = {
+  getSmtpConfig: typeof getSmtpConfig
+  loadIdentity: typeof loadIdentity
+  evaluateGate: typeof evaluateGate
+  buildFrom: typeof buildFrom
+  buildHeaders: typeof buildHeaders
+  buildSmartSignature: typeof buildSmartSignature
+  escapeHtml: typeof escapeHtml
+  sanitizeHeaderValue: typeof sanitizeHeaderValue
+  redactSecrets: typeof redactSecrets
+  maskEmail: typeof maskEmail
+  sanitizeStore: typeof sanitizeStore
+  storeKey: typeof storeKey
+  getGitInfo: typeof getGitInfo
+  getProjectName: typeof getProjectName
+  shortSessionID: typeof shortSessionID
+  hasSentBefore: typeof hasSentBefore
+  markSent: typeof markSent
+  checkRateLimit: typeof checkRateLimit
+  bumpRateLimit: typeof bumpRateLimit
+  getImapConfig: typeof getImapConfig
+  parseInboxMessage: typeof parseInboxMessage
+  decodeMimeWords: typeof decodeMimeWords
+  belongsToAgent: typeof belongsToAgent
+  isReplyToUs: typeof isReplyToUs
+  isSelfSent: typeof isSelfSent
+  recordSentId: typeof recordSentId
+  sentIdsFor: typeof sentIdsFor
+  MAX_SCAN: number
+  htmlToText: typeof htmlToText
+  setImapFactory: (fn: ImapClientFactory) => void
+  resetRateLimit: () => void
+  setTransportFactory: (fn: TransportFactory) => void
+  getLastSmtpDiagnostics: () => string[]
+  paths: { IDENTITY_PATH: string; SESSION_STORE_PATH: string; STATE_DIR: string }
+}
+
+const testing: Testing = {
   getSmtpConfig,
   loadIdentity,
   evaluateGate,
@@ -1507,3 +1549,9 @@ export const __testing = {
   getLastSmtpDiagnostics: () => lastSmtpDiagnostics,
   paths: { IDENTITY_PATH, SESSION_STORE_PATH, STATE_DIR },
 }
+
+// Espono la superficie di test come PROPRIETÀ della funzione plugin, non come
+// export: vedi il commento sopra e test/loader.compat.test.mjs.
+Object.assign(AgentMailPlugin, { __testing: testing })
+
+export type AgentMailPluginWithTesting = typeof AgentMailPlugin & { __testing: Testing }
