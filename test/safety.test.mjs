@@ -177,22 +177,121 @@ test("SECURITY: allowlist applicata anche a mail_report", async () => {
 
 // ── dry_run ──
 
-test("dry_run: anteprima completa senza inviare e senza sbloccare il gate", async () => {
+test("SECURITY REGRESSION: allowlist senza `to` esplicito controlla il destinatario RISOLTO", async () => {
+  // Il bypass del round 2: checkRecipients guardava args.to mentre l'invio
+  // usava to = args.to || MAIL_TO || identity.email. Con to omesso (il default
+  // documentato) l'allowlist non controllava nulla.
+  process.env.MAIL_ALLOWED_RECIPIENTS = "ok@example.invalid"
+  process.env.MAIL_TO = "victim-not-in-allowlist@evil.example"
+  SENT.length = 0
+  try {
+    const h = await hooks()
+    const r = await h.tool.mail_send.execute(
+      { subject: "s", html: "<p>x</p>", reason: "integration", confirm: true },
+      ctx(`res-${Date.now()}`)
+    )
+    assert.match(r.output, /BLOCCATO da MAIL_ALLOWED_RECIPIENTS/, r.output)
+    assert.match(r.output, /victim-not-in-allowlist@evil\.example/, "il messaggio deve dire quale indirizzo è fuori lista")
+    assert.equal(SENT.length, 0, "nulla email deve essere uscita")
+  } finally {
+    delete process.env.MAIL_ALLOWED_RECIPIENTS
+    delete process.env.MAIL_TO
+  }
+})
+
+test("SECURITY REGRESSION: stessa cosa su mail_report", async () => {
+  process.env.MAIL_ALLOWED_RECIPIENTS = "ok@example.invalid"
+  process.env.MAIL_TO = "victim-not-in-allowlist@evil.example"
+  SENT.length = 0
+  try {
+    const h = await hooks()
+    const r = await h.tool.mail_report.execute(
+      { title: "T", summary: "S", confirm: true },
+      ctx(`resr-${Date.now()}`)
+    )
+    assert.match(r.output, /BLOCCATO da MAIL_ALLOWED_RECIPIENTS/, r.output)
+    assert.equal(SENT.length, 0)
+  } finally {
+    delete process.env.MAIL_ALLOWED_RECIPIENTS
+    delete process.env.MAIL_TO
+  }
+})
+
+test("SECURITY REGRESSION: destinatario con virgolette+parentesi angolari viene rifiutato (fail closed)", () => {
+  // nodemailer e il nostro parser divergevano su questa forma: l'allowlist
+  // vedeva un indirizzo consentito, il server SMTP ne usava un altro.
+  process.env.MAIL_ALLOWED_RECIPIENTS = "ok@example.invalid"
+  try {
+    const evil = '"ok@example.invalid" <evil@attacker.example>'
+    assert.equal(T.hasAmbiguousRecipientSyntax(evil), true)
+    const r = T.checkRecipients([evil])
+    assert.equal(r.ok, false, "sintassi ambigua non deve mai essere autorizzata")
+  } finally {
+    delete process.env.MAIL_ALLOWED_RECIPIENTS
+  }
+})
+
+test("SECURITY: estrazione gli indirizzi che il parser SMTP potrebbe usare", () => {
+  assert.deepEqual(T.extractAddresses("A <a@x.com>, b@x.com").sort(), ["a@x.com", "b@x.com"])
+  assert.deepEqual(T.extractAddresses("ok@x.com <evil@y.com>").sort(), ["evil@y.com", "ok@x.com"], "va estretto tutto")
+  assert.deepEqual(T.extractAddresses("a@x.com; c@x.com").sort(), ["a@x.com", "c@x.com"])
+  // un token con '@' ma senza dominio è comunque candidato: fail closed
+  assert.deepEqual(T.extractAddresses("nessuna@posta"), ["nessuna@posta"])
+  assert.deepEqual(T.extractAddresses(""), [])
+})
+
+test("SECURITY REGRESSION: RESEND_SMTP_PASS non va a un SMTP_HOST arbitrario", () => {
+  process.env.RESEND_SMTP_PASS = "re_LIVE_secret_key"
+  process.env.SMTP_HOST = "smtp.attacker.example"
+  delete process.env.MAIL_PROVIDER
+  delete process.env.SMTP_USER
+  delete process.env.SMTP_PASS
+  try {
+    const cfg = T.getSmtpConfig()
+    assert.equal(cfg, null, "la chiave Resend non deve essere consegnata a un host terzo")
+    const d = T.getLastSmtpDiagnostics().join(" ")
+    assert.ok(/RESEND_SMTP_PASS/.test(d), d)
+  } finally {
+    delete process.env.RESEND_SMTP_PASS
+    delete process.env.SMTP_HOST
+  }
+})
+
+test("SMTP: Resend su host Resend legittimo continua a funzionare", () => {
+  process.env.RESEND_SMTP_PASS = "re_LIVE_secret_key"
+  delete process.env.SMTP_HOST
+  delete process.env.MAIL_PROVIDER
+  try {
+    const cfg = T.getSmtpConfig()
+    assert.ok(cfg, "il percorso Resend normale deve funzionare")
+    assert.equal(cfg.provider, "resend")
+    assert.equal(cfg.host, "smtp.resend.com")
+  } finally {
+    delete process.env.RESEND_SMTP_PASS
+  }
+})
+
+test("isResendHost: solo i domini Resend", () => {
+  assert.equal(T.isResendHost("smtp.resend.com"), true)
+  assert.equal(T.isResendHost("SMTP.RESEND.COM:587"), true)
+  assert.equal(T.isResendHost("resend.com.attacker.example"), false)
+  assert.equal(T.isResendHost("evilresend.com"), false)
+})
+
+test("dry_run: funziona anche al primo invio, senza reason/confirm", async () => {
   delete process.env.MAIL_ALLOWED_RECIPIENTS
   SENT.length = 0
   const h = await hooks()
-  const s = `dry-${Date.now()}`
-
-  const r = await h.tool.mail_send.execute(base({ dry_run: true }), ctx(s))
-  assert.match(r.output, /DRY RUN/, r.output)
-  assert.match(r.output, /Da:/, "deve mostrare il From")
-  assert.match(r.output, /A:/, "deve mostrare il destinatario")
-  assert.match(r.output, /Oggetto:/, "deve mostrare l'oggetto")
-  assert.match(r.output, /Firma che verrebbe aggiunta/, "deve mostrare la firma completa")
-  assert.equal(SENT.length, 0, "dry_run non deve inviare")
-
-  // il gate non deve essere stato sbloccato: senza dry_run serve ancora conferma
-  const blocked = await h.tool.mail_send.execute(base({ reason: undefined, confirm: undefined }), ctx(s))
-  assert.match(blocked.output, /BLOCCATO/, "dry_run non deve sbloccare la sessione")
+  const s = `dryfirst-${Date.now()}`
+  const r = await h.tool.mail_send.execute(
+    { to: "ok@example.invalid", subject: "s", html: "<p>corpo</p>", dry_run: true },
+    ctx(s)
+  )
+  assert.match(r.output, /DRY RUN/, `il dry-run deve precedere il gate: ${r.output}`)
+  assert.match(r.output, /sessione non sbloccata/, r.output)
   assert.equal(SENT.length, 0)
+
+  // e il gate resta ancora chiuso
+  const blocked = await h.tool.mail_send.execute({ to: "ok@example.invalid", subject: "s", html: "<p>x</p>" }, ctx(s))
+  assert.match(blocked.output, /BLOCCATO/, "il dry-run non deve sbloccare la sessione")
 })

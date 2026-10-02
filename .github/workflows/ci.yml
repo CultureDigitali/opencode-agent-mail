@@ -1,8 +1,18 @@
 name: CI
 on: [push, pull_request]
+
+# Least privilege: the workflow only needs to read the repository.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -12,13 +22,14 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: node --check dist/index.js
+      - name: Plugin is loadable by opencode
+        run: node test/loader.compat.test.mjs
       - name: Smoke test del plugin caricato
         run: node test/smoke.plugin.mjs
       - name: Nessun segreto nel sorgente
         run: |
-          # Chiavi Resend e valori reali assegnati a variabili di password.
           # Pattern volutamente stretti: regex larghe generano falsi positivi.
-          if git grep -nE '(re_[A-Za-z0-9]{20,}|(PASSWORD|SMTP_PASS|APP_PASS)=[A-Za-z0-9]{12,})' -- src test .github; then
+          if git grep -nE '(re_[A-Za-z0-9]{20,}|(PASSWORD|SMTP_PASS|IMAP_PASS|APP_PASS)=[A-Za-z0-9]{12,})' -- src test .github; then
             echo "::error::possibile credenziale nel sorgente"
             exit 1
           fi

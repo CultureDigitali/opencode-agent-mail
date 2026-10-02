@@ -49,24 +49,46 @@ function checkRecipients(fields: (string | undefined)[]): { ok: true } | { ok: f
   const blocked: string[] = []
   for (const field of fields) {
     if (!field) continue
+    // sintassi ambigua: non sappiamo quale indirizzo userà davvero il server SMTP,
+    // quindi non possiamo autorizzarla. Fail closed.
+    if (hasAmbiguousRecipientSyntax(field)) {
+      return {
+        ok: false,
+        blocked: [`sintassi destinatario non verificabile: ${JSON.stringify(String(field).slice(0, 120))}`],
+        allowed,
+      }
+    }
     for (const addr of extractAddresses(field)) {
-      if (!allowed.includes(addr.toLowerCase())) blocked.push(addr)
+      if (!allowed.includes(addr)) blocked.push(addr)
     }
   }
   return blocked.length === 0 ? { ok: true } : { ok: false, blocked, allowed }
 }
 
-/** Estrae indirizzi da una stringa di destinatari, anche in forma di lista. */
+/**
+ * Estrae TUTTI gli indirizzi presenti in un campo di destinatari.
+ *
+ * Deve essere più permissivo del parser SMTP: se qui non trova un indirizzo
+ * che nodemailer troverà, l'allowlist può essere aggirata. Per questo non si
+ * fidata del "primo <...>" ma estrae ogni token che sembra un indirizzo, e
+ * tratta come sospette le virgolette (combinazione virgolette+parentesi
+ * angolari usata per far divergere i due parser).
+ */
 function extractAddresses(field: string): string[] {
-  return String(field)
-    .split(/[,;]/)
-    .map((token) => {
-      // "Nome <a@x.com>" -> prende l'indirizzo dentro le parentesi angolari
-      const angled = token.match(/<([^>]+)>/)
-      const value = (angled ? angled[1] : token).replace(/\([^)]*\)/g, "").trim().toLowerCase()
-      return value
-    })
-    .filter((s) => s.includes("@"))
+  const raw = String(field ?? "")
+  const found = new Set<string>()
+  // ogni sequenza che contiene un '@' viene considerata un indirizzo candidato
+  for (const token of raw.split(/[,;]/)) {
+    for (const match of token.matchAll(/[^\s<>"(),;:]+@[^\s<>"(),;:]+/g)) {
+      found.add(match[0].trim().toLowerCase())
+    }
+  }
+  return [...found]
+}
+
+/** True se il campo usa sintassi che fanno divergere i due parser. */
+function hasAmbiguousRecipientSyntax(field: string): boolean {
+  return /"[^"]*"[^,;]*</.test(String(field ?? "")) || /\r|\n/.test(String(field ?? ""))
 }
 
 // ── Paths ─────────────────────────────────────────────────────────
@@ -183,6 +205,8 @@ function isValidPort(port: number): boolean {
  * mail_status può spiegare il perché invece di limitarsi a "non configurato".
  */
 let lastSmtpDiagnostics: string[] = []
+/** Idem per IMAP: la diagnosi va mostrata anche quando la config e rifiutata. */
+let lastImapDiagnostics: string[] = []
 
 /**
  * Risoluzione esplicita del provider.
@@ -253,10 +277,21 @@ function getSmtpConfig(): SmtpConfig | null {
       lastSmtpDiagnostics = diagnostics
       return null
     }
+    // Come per IMAP: la chiave Resend non può essere consegnata a un host
+    // arbitrario. Senza questo, SMTP_HOST=attacker.example + RESEND_SMTP_PASS
+    // invierebbe la chiave (e la reputazione del dominio) a un terzo.
+    const resendHost = process.env.SMTP_HOST || "smtp.resend.com"
+    if (!isResendHost(resendHost)) {
+      diagnostics.push(
+        `SMTP_HOST="${resendHost}" non e un server Resend, ma la credenziale e RESEND_SMTP_PASS: rifiutato per non consegnare la tua chiave a un host terzo. Togli SMTP_HOST o usa SMTP_USER/SMTP_PASS con MAIL_PROVIDER=generic.`
+      )
+      lastSmtpDiagnostics = diagnostics
+      return null
+    }
     lastSmtpDiagnostics = diagnostics
     return {
       provider: "resend",
-      host: process.env.SMTP_HOST || "smtp.resend.com",
+      host: resendHost,
       port: Number(process.env.SMTP_PORT || 587),
       secure: false,
       requireTLS: true,
@@ -430,6 +465,7 @@ type ImapConfig = {
  */
 function getImapConfig(): ImapConfig | null {
   const diagnostics: string[] = []
+  lastImapDiagnostics = diagnostics
   const explicitUser = process.env.IMAP_USER || ""
   const explicitPass = process.env.IMAP_PASS || ""
   const usingGmailCreds = !explicitUser || !explicitPass
@@ -815,6 +851,12 @@ function isGoogleImapHost(host: string): boolean {
   return h === "imap.gmail.com" || h === "imap.googlemail.com" || h.endsWith(".googlemail.com") || h.endsWith(".gmail.com") || h === "gmail.com"
 }
 
+/** Host SMTP Resend: gli unici ammessi con RESEND_SMTP_PASS. */
+function isResendHost(host: string): boolean {
+  const h = String(host || "").toLowerCase().replace(/:\d+$/, "")
+  return h === "smtp.resend.com" || h.endsWith(".resend.com")
+}
+
 // Non lascia mai trapelare la password SMTP dentro un errore del provider
 function redactSecrets(message: string, secret?: string): string {
   let out = String(message ?? "")
@@ -1085,6 +1127,44 @@ export const AgentMailPlugin: Plugin = async (input) => {
           const cached = projectBySession.get(sessionID)
           const proj = { directory: ctx.directory || cached?.directory || globalDirectory, worktree: ctx.worktree || cached?.worktree || globalWorktree }
 
+          // dry-run PRIMA del gate di contesto: serve proprio nel momento in cui
+          // si valuta se inviare a qualcuno, e non deve richiedere confirm.
+          // Non invia, non sblocca la sessione, non tocca lo stato.
+          if (args.dry_run === true) {
+            const previewSig = buildSmartSignature({
+              identity,
+              sessionID,
+              agentName: ctx.agent,
+              directory: proj.directory,
+              worktree: proj.worktree,
+              model,
+              reason: args.reason,
+              senderNote: args.sender_note,
+            })
+            const previewDenied = checkRecipients([to, args.cc, args.bcc])
+            return {
+              output: [
+                `DRY RUN — nessuna email inviata, nessuno stato modificato, sessione non sbloccata.`,
+                ``,
+                `Da:        ${from}`,
+                `A:         ${to}`,
+                args.cc ? `Cc:        ${args.cc}` : null,
+                args.bcc ? `Bcc:       ${args.bcc}` : null,
+                `Oggetto:   ${sanitizeHeaderValue(args.subject)}`,
+                `Allowlist: ${previewDenied.ok ? "OK" : "BLOCCATO: " + previewDenied.blocked.join(", ")}`,
+                `Motivo:    ${args.reason || "(non specificato: al primo invio reale sara richiesto)"}`,
+                ``,
+                `Corpo (cosi' come lo riceverebbe il destinatario):`,
+                indent(htmlToText(args.html || args.text || "")),
+                ``,
+                `Firma che verrebbe aggiunta (visibile al destinatario):`,
+                indent(previewSig.text),
+              ]
+                .filter((l) => l !== null)
+                .join("\n"),
+            }
+          }
+
           // RATE LIMIT: protegge la quota dell'account da un agente in loop
           const rate = checkRateLimit(identity.agent_id)
           if (!rate.allowed) {
@@ -1133,43 +1213,7 @@ export const AgentMailPlugin: Plugin = async (input) => {
 const textBody = args.text ? `${args.text}\n\n${sig.text}` : `${htmlToText(args.html || "")}\n\n${sig.text}`
           const headers = buildHeaders(identity, sessionID, model)
 
-          // dry-run: anteprima esatta, nessun invio, nessuna modifica di stato
-          if (args.dry_run === true) {
-            const previewSig = buildSmartSignature({
-              identity,
-              sessionID,
-              agentName: ctx.agent,
-              directory: proj.directory,
-              worktree: proj.worktree,
-              model,
-              reason: args.reason,
-              senderNote: args.sender_note,
-            })
-            const previewDenied = checkRecipients([args.to, args.cc, args.bcc])
-            return {
-              output: [
-                `DRY RUN — nessuna email inviata, nessuno stato modificato.`,
-                ``,
-                `Da:      ${from}`,
-                `A:       ${to}`,
-                args.cc ? `Cc:      ${args.cc}` : null,
-                args.bcc ? `Bcc:     ${args.bcc}` : null,
-                `Oggetto: ${sanitizeHeaderValue(args.subject)}`,
-                `Allowlist: ${previewDenied.ok ? "OK" : "BLOCCATO: " + previewDenied.blocked.join(", ")}`,
-                `Motivo:  ${args.reason || "(non specificato)"}`,
-                ``,
-                `Corpo (cosi' come lo riceverebbe il destinatario):`,
-                indent(htmlToText(args.html || args.text || "")),
-                ``,
-                `Firma che verrebbe aggiunta:`,
-                indent(previewSig.text),
-              ]
-                .filter((l) => l !== null)
-                .join("\n"),
-            }
-          }
-
-          const denied = checkRecipients([args.to, args.cc, args.bcc])
+          const denied = checkRecipients([to, args.cc, args.bcc])
           if (!denied.ok) {
             return {
               output: `⛔ BLOCCATO da MAIL_ALLOWED_RECIPIENTS: ${denied.blocked.join(", ")} non in lista. Consentiti: ${denied.allowed.join(", ")}.`,
@@ -1283,7 +1327,7 @@ const textBody = args.text ? `${args.text}\n\n${sig.text}` : `${htmlToText(args.
           `
           const html = `<div style="font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:1.6;color:#0f172a;max-width:640px">${body}${sig.html}</div>`
 
-          const reportDenied = checkRecipients([args.to])
+          const reportDenied = checkRecipients([to])
           if (!reportDenied.ok) {
             return {
               output: `⛔ BLOCCATO da MAIL_ALLOWED_RECIPIENTS: ${reportDenied.blocked.join(", ")} non in lista. Consentiti: ${reportDenied.allowed.join(", ")}.`,
@@ -1453,8 +1497,10 @@ const textBody = args.text ? `${args.text}\n\n${sig.text}` : `${htmlToText(args.
           const cfg = getImapConfig()
           if (!cfg) {
             return {
-              output:
-                "IMAP non configurato. Serve IMAP_USER+IMAP_PASS, oppure GMAIL_USER+GMAIL_APP_PASSWORD (la stessa password per app usata per l'invio).",
+              output: [
+                "IMAP non disponibile.",
+                ...(lastImapDiagnostics.length ? lastImapDiagnostics : ["Serve IMAP_USER + IMAP_PASS, oppure GMAIL_USER + GMAIL_APP_PASSWORD (la stessa password per app usata per l'invio)."]),
+              ].join("\n"),
             }
           }
 
@@ -1621,6 +1667,9 @@ type Testing = {
   checkRecipients: typeof checkRecipients
   extractAddresses: typeof extractAddresses
   isGoogleImapHost: typeof isGoogleImapHost
+  isResendHost: typeof isResendHost
+  hasAmbiguousRecipientSyntax: typeof hasAmbiguousRecipientSyntax
+  getLastImapDiagnostics: () => string[]
   paths: { IDENTITY_PATH: string; SESSION_STORE_PATH: string; STATE_DIR: string }
 }
 
@@ -1671,6 +1720,9 @@ const testing: Testing = {
   checkRecipients,
   extractAddresses,
   isGoogleImapHost,
+  isResendHost,
+  hasAmbiguousRecipientSyntax,
+  getLastImapDiagnostics: () => lastImapDiagnostics,
   paths: { IDENTITY_PATH, SESSION_STORE_PATH, STATE_DIR },
 }
 

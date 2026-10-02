@@ -1,7 +1,7 @@
 {
   "name": "opencode-agent-mail",
   "version": "1.0.0",
-  "description": "One inbox. Infinite agents. The revolutionary email identity plugin for OpenCode — give every agent a soul, keep one Gmail.",
+  "description": "OpenCode plugin: give each agent a distinguishable email identity on one shared mailbox, with a stated reason on every send.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
