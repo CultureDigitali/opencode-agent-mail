@@ -17,7 +17,7 @@
     "dev": "tsc -p tsconfig.json --watch",
     "prepublishOnly": "npm run build",
     "pretest": "npm run build",
-    "test": "node --test test/unit.test.mjs test/ratelimit.test.mjs test/integration.test.mjs test/imap.test.mjs test/loader.compat.test.mjs test/gate.test.mjs",
+    "test": "node --test test/unit.test.mjs test/ratelimit.test.mjs test/integration.test.mjs test/imap.test.mjs test/loader.compat.test.mjs test/gate.test.mjs test/safety.test.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "keywords": [

@@ -30,12 +30,55 @@ type SessionRecord = {
   lastTo?: string
 }
 
+/**
+ * Controllo destinatari, applicato a TUTTI i campi di consegna (to, cc, bcc).
+ *
+ * MAIL_ALLOWED_RECIPIENTS è una allowlist esplicita: se impostata, ogni
+ * destinatario fuori lista blocca l'invio. Serve perché, senza, un agente può
+ * (anche indotto da contenuti letti via IMAP) scrivere a chiunque dal tuo
+ * account. Disattivata di default per non rompere le installazioni esistenti,
+ * ma è la prima cosa da attivare per un uso serio.
+ */
+function checkRecipients(fields: (string | undefined)[]): { ok: true } | { ok: false; blocked: string[]; allowed: string[] } {
+  const raw = (process.env.MAIL_ALLOWED_RECIPIENTS || "").trim()
+  if (!raw) return { ok: true }
+  const allowed = raw
+    .split(/[,;\s]+/)
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean)
+  const blocked: string[] = []
+  for (const field of fields) {
+    if (!field) continue
+    for (const addr of extractAddresses(field)) {
+      if (!allowed.includes(addr.toLowerCase())) blocked.push(addr)
+    }
+  }
+  return blocked.length === 0 ? { ok: true } : { ok: false, blocked, allowed }
+}
+
+/** Estrae indirizzi da una stringa di destinatari, anche in forma di lista. */
+function extractAddresses(field: string): string[] {
+  return String(field)
+    .split(/[,;]/)
+    .map((token) => {
+      // "Nome <a@x.com>" -> prende l'indirizzo dentro le parentesi angolari
+      const angled = token.match(/<([^>]+)>/)
+      const value = (angled ? angled[1] : token).replace(/\([^)]*\)/g, "").trim().toLowerCase()
+      return value
+    })
+    .filter((s) => s.includes("@"))
+}
+
 // ── Paths ─────────────────────────────────────────────────────────
 // AGENT_MAIL_STATE_DIR permette di isolare identità e store (test, portatile,
 // ambienti multi-profilo) senza toccare la configazione globale.
 const STATE_DIR = process.env.AGENT_MAIL_STATE_DIR || path.join(os.homedir(), ".config", "opencode")
 const IDENTITY_PATH = path.join(STATE_DIR, "agent-identity.json")
-const IDENTITY_FALLBACK = path.join(__dirname, "..", "agent-identity.json")
+// Nessun fallback "a caso" fuori da STATE_DIR: una copia di questo file dentro
+// una directory di pacchetto o di progetto (clone git, npm link, altro
+// processo con gli stessi permessi) potrebbe altrimenti fissare l'identità —
+// cioè From, replyTo, X-Agent-ID e destinatario predefinito — di ogni agente.
+// Se serve un profilo separato si usa AGENT_MAIL_STATE_DIR, che è esplicito.
 const SESSION_STORE_PATH = path.join(STATE_DIR, "agent-mail-sessions.json")
 
 // ── In-memory caches (per-process) ────────────────────────────────
@@ -63,7 +106,7 @@ function loadIdentity(): IdentityLoad {
   let fileUsed = "(nessuno)"
   let fileValid = true
 
-  for (const p of [IDENTITY_PATH, IDENTITY_FALLBACK]) {
+  for (const p of [IDENTITY_PATH]) {
     try {
       if (!fs.existsSync(p)) continue
       const parsed = JSON.parse(fs.readFileSync(p, "utf8"))
@@ -378,18 +421,36 @@ type ImapConfig = {
 /**
  * Configurazione IMAP. Riutilizza le credenziali Gmail già presenti, così
  * non serve configurare nulla di nuovo se usi una password per app.
- * L'accesso in lettura richiede la stessa password per app di Gmail.
+ *
+ * SICUREZZA: le credenziali Gmail NON possono essere inviate a un host
+ * arbitrario. Senza questo controllo, `IMAP_HOST=attacker.example` (o una
+ * `.env` di un progetto clonato) farebbe recapitare la App Password di Gmail
+ * a un server terzo via LOGIN. Il fallback delle credenziali Gmail è quindi
+ * ammesso solo su host Google; per altri host serve una password dedicata.
  */
 function getImapConfig(): ImapConfig | null {
   const diagnostics: string[] = []
-  const user = process.env.IMAP_USER || process.env.GMAIL_USER || ""
-  const pass = process.env.IMAP_PASS || process.env.GMAIL_APP_PASSWORD || ""
+  const explicitUser = process.env.IMAP_USER || ""
+  const explicitPass = process.env.IMAP_PASS || ""
+  const usingGmailCreds = !explicitUser || !explicitPass
+  const user = explicitUser || process.env.GMAIL_USER || ""
+  const pass = explicitPass || process.env.GMAIL_APP_PASSWORD || ""
+  const host = process.env.IMAP_HOST || "imap.gmail.com"
+
   if (!user || !pass) {
     diagnostics.push(
       "IMAP non configurato: servono IMAP_USER + IMAP_PASS, oppure GMAIL_USER + GMAIL_APP_PASSWORD (la stessa password per app usata per l'invio)."
     )
     return null
   }
+
+  if (usingGmailCreds && !isGoogleImapHost(host)) {
+    diagnostics.push(
+      `IMAP_HOST="${host}" non e un server Google, ma la password proviene da GMAIL_APP_PASSWORD:|rifiutato per non inviare la tua App Password a un host terzo.|Usa IMAP_USER + IMAP_PASS dedicati per questo host.`
+    )
+    return null
+  }
+
   const rawPort = Number(process.env.IMAP_PORT || 993)
   if (!isValidPort(rawPort)) {
     diagnostics.push(`IMAP_PORT non valido ("${process.env.IMAP_PORT}"): uso 993.`)
@@ -400,7 +461,7 @@ function getImapConfig(): ImapConfig | null {
   const secure = process.env.IMAP_SECURE === "true" || (process.env.IMAP_SECURE !== "false" && port === 993)
   if (!secure && process.env.IMAP_ALLOW_INSECURE_TLS !== "true") {
     diagnostics.push(
-      `IMAP su porta ${port} senza TLS: le credenziali viaggerebbero in chiaro. Imposta IMAP_SECURE=true o IMAP_ALLOW_INSECURE_TLS=true se è un relay fidato.`
+      `IMAP su porta ${port} senza TLS: le credenziali viaggerebbero in chiaro. Imposta IMAP_SECURE=true o IMAP_ALLOW_INSECURE_TLS=true se e un relay fidato.`
     )
     return null
   }
@@ -748,6 +809,12 @@ function isValidEmail(v: string): boolean {
   return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s)
 }
 
+/** Host IMAP appartenenti a Google: gli unici ammessi con le credenziali Gmail. */
+function isGoogleImapHost(host: string): boolean {
+  const h = String(host || "").toLowerCase().replace(/:\d+$/, "")
+  return h === "imap.gmail.com" || h === "imap.googlemail.com" || h.endsWith(".googlemail.com") || h.endsWith(".gmail.com") || h === "gmail.com"
+}
+
 // Non lascia mai trapelare la password SMTP dentro un errore del provider
 function redactSecrets(message: string, secret?: string): string {
   let out = String(message ?? "")
@@ -1002,6 +1069,7 @@ export const AgentMailPlugin: Plugin = async (input) => {
           reason: tool.schema.string().optional().describe("OBBLIGATORIO al primo invio della sessione: perche stai mandando questa email? Sara visibile in firma"),
           sender_note: tool.schema.string().optional().describe("Nota opzionale su chi sei in questo task (es. 'Sto lavorando a husky-vs-cats come senior dev')"),
           confirm: tool.schema.boolean().optional().describe("Metti true per confermare invio dopo aver fornito reason al primo invio"),
+          dry_run: tool.schema.boolean().optional().describe("true = mostra esattamente cosa verrebbe inviato, senza inviare nulla"),
         },
         async execute(args, ctx) {
           const { identity } = loadIdentity()
@@ -1064,6 +1132,49 @@ export const AgentMailPlugin: Plugin = async (input) => {
 // deriviamo invece di omettere del tutto text.
 const textBody = args.text ? `${args.text}\n\n${sig.text}` : `${htmlToText(args.html || "")}\n\n${sig.text}`
           const headers = buildHeaders(identity, sessionID, model)
+
+          // dry-run: anteprima esatta, nessun invio, nessuna modifica di stato
+          if (args.dry_run === true) {
+            const previewSig = buildSmartSignature({
+              identity,
+              sessionID,
+              agentName: ctx.agent,
+              directory: proj.directory,
+              worktree: proj.worktree,
+              model,
+              reason: args.reason,
+              senderNote: args.sender_note,
+            })
+            const previewDenied = checkRecipients([args.to, args.cc, args.bcc])
+            return {
+              output: [
+                `DRY RUN — nessuna email inviata, nessuno stato modificato.`,
+                ``,
+                `Da:      ${from}`,
+                `A:       ${to}`,
+                args.cc ? `Cc:      ${args.cc}` : null,
+                args.bcc ? `Bcc:     ${args.bcc}` : null,
+                `Oggetto: ${sanitizeHeaderValue(args.subject)}`,
+                `Allowlist: ${previewDenied.ok ? "OK" : "BLOCCATO: " + previewDenied.blocked.join(", ")}`,
+                `Motivo:  ${args.reason || "(non specificato)"}`,
+                ``,
+                `Corpo (cosi' come lo riceverebbe il destinatario):`,
+                indent(htmlToText(args.html || args.text || "")),
+                ``,
+                `Firma che verrebbe aggiunta:`,
+                indent(previewSig.text),
+              ]
+                .filter((l) => l !== null)
+                .join("\n"),
+            }
+          }
+
+          const denied = checkRecipients([args.to, args.cc, args.bcc])
+          if (!denied.ok) {
+            return {
+              output: `⛔ BLOCCATO da MAIL_ALLOWED_RECIPIENTS: ${denied.blocked.join(", ")} non in lista. Consentiti: ${denied.allowed.join(", ")}.`,
+            }
+          }
 
           try {
             const info = await transporter.sendMail({
@@ -1171,6 +1282,13 @@ const textBody = args.text ? `${args.text}\n\n${sig.text}` : `${htmlToText(args.
             ${sectionsHtml}
           `
           const html = `<div style="font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:1.6;color:#0f172a;max-width:640px">${body}${sig.html}</div>`
+
+          const reportDenied = checkRecipients([args.to])
+          if (!reportDenied.ok) {
+            return {
+              output: `⛔ BLOCCATO da MAIL_ALLOWED_RECIPIENTS: ${reportDenied.blocked.join(", ")} non in lista. Consentiti: ${reportDenied.allowed.join(", ")}.`,
+            }
+          }
 
           try {
             const info = await transporter.sendMail({
@@ -1500,6 +1618,9 @@ type Testing = {
   resetRateLimit: () => void
   setTransportFactory: (fn: TransportFactory) => void
   getLastSmtpDiagnostics: () => string[]
+  checkRecipients: typeof checkRecipients
+  extractAddresses: typeof extractAddresses
+  isGoogleImapHost: typeof isGoogleImapHost
   paths: { IDENTITY_PATH: string; SESSION_STORE_PATH: string; STATE_DIR: string }
 }
 
@@ -1547,6 +1668,9 @@ const testing: Testing = {
     transportFactory = fn ?? createTransporterImpl
   },
   getLastSmtpDiagnostics: () => lastSmtpDiagnostics,
+  checkRecipients,
+  extractAddresses,
+  isGoogleImapHost,
   paths: { IDENTITY_PATH, SESSION_STORE_PATH, STATE_DIR },
 }
 
