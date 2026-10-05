@@ -275,8 +275,9 @@ test("P2: errori SMTP non espongono la password", () => {
 })
 
 test("maskEmail non rivela la parte locale completa", () => {
-  const masked = T.maskEmail("pierluigi.strazzullo@gmail.com")
-  assert.ok(!masked.includes("strazzullo"))
+  const masked = T.maskEmail("mario.rossi.sviluppo@gmail.com")
+  assert.ok(!masked.includes("rossi"))
+  assert.ok(!masked.includes("sviluppo"))
   assert.ok(masked.endsWith("@gmail.com"))
 })
 
