@@ -1,7 +1,7 @@
 {
   "name": "opencode-agent-mail",
   "version": "1.0.0",
-  "description": "One inbox. Infinite agents. The revolutionary email identity plugin for OpenCode — give every agent a soul, keep one Gmail.",
+  "description": "OpenCode plugin: give each agent a distinguishable email identity on one shared mailbox, with a stated reason on every send.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -16,7 +16,9 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
     "prepublishOnly": "npm run build",
-    "test:mail": "node --loader ts-node/esm test/send.test.ts"
+    "pretest": "npm run build",
+    "test": "node --test test/unit.test.mjs test/ratelimit.test.mjs test/integration.test.mjs test/imap.test.mjs test/loader.compat.test.mjs test/gate.test.mjs test/safety.test.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "keywords": [
     "opencode",
@@ -34,10 +36,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-org/opencode-agent-mail"
+    "url": "git+https://github.com/CultureDigitali/opencode-agent-mail.git"
   },
-  "homepage": "https://github.com/your-org/opencode-agent-mail#readme",
-  "bugs": "https://github.com/your-org/opencode-agent-mail/issues",
+  "homepage": "https://github.com/CultureDigitali/opencode-agent-mail#readme",
+  "bugs": "https://github.com/CultureDigitali/opencode-agent-mail/issues",
   "engines": {
     "node": ">=18"
   },
@@ -45,12 +47,13 @@
     "@opencode-ai/plugin": "^1.18.0"
   },
   "dependencies": {
-    "nodemailer": "^9.0.5"
+    "imapflow": "^2.2.1",
+    "nodemailer": "^10.0.13"
   },
   "devDependencies": {
-    "typescript": "^5.6.0",
     "@types/node": "^22.0.0",
-    "@types/nodemailer": "^6.4.15"
+    "@types/nodemailer": "^6.4.15",
+    "typescript": "^5.6.0"
   },
   "publishConfig": {
     "access": "public"
