@@ -378,7 +378,7 @@ set `SMTP_ALLOW_ANONYMOUS=true`.
 
 ```ts
 mail_send({
-  to: "pierluigi@gmail.com",          // default: MAIL_TO
+  to: "you@example.com",             // default: MAIL_TO
   subject: "Build completed",
   html: "<p>3 tasks done</p>",        // or text
   text: "fallback plain text",

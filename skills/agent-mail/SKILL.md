@@ -68,11 +68,11 @@ o sui messaggi con il suo `X-Agent-ID`: così la casella resta leggibile con pi�
 **DEVI usare `reason` al primo invio:**
 ```ts
 // ❌ SBAGLIATO (verrai bloccato)
-mail_send({ to: "pierluigi@gmail.com", subject: "Fatto", html: "<p>task done</p>" })
+mail_send({ to: "you@example.com", subject: "Fatto", html: "<p>task done</p>" })
 
 // ✅ CORRETTO
 mail_send({
-  to: "pierluigi@gmail.com",
+  to: "you@example.com",
   subject: "Husky vs Cats — Build completata",
   html: "<p>3 task ok, nessun errore.</p>",
   reason: "Aggiornamento fine task richiesto da Pierluigi per progetto husky-vs-cats",

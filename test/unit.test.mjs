@@ -275,10 +275,10 @@ test("P2: errori SMTP non espongono la password", () => {
 })
 
 test("maskEmail non rivela la parte locale completa", () => {
-  const masked = T.maskEmail("mario.rossi.sviluppo@gmail.com")
+  const masked = T.maskEmail("mario.rossi.sviluppo@example.invalid")
   assert.ok(!masked.includes("rossi"))
   assert.ok(!masked.includes("sviluppo"))
-  assert.ok(masked.endsWith("@gmail.com"))
+  assert.ok(masked.endsWith("@example.invalid"))
 })
 
 test("buildFrom quoting: nome con virgolette resta valido", () => {
